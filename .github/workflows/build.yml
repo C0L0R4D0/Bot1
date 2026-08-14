@@ -1,0 +1,57 @@
+name: Build VideoProps 1.12.2
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      - name: Reconstruct and verify source
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cat ci/text.b64.00 ci/text.b64.01 ci/text.b64.02 ci/text.b64.03
+            cat ci/p04.00 ci/p04.01fix.00 ci/p04.01fix.01 ci/p04.01fix.02 ci/p04.01fix.03 ci/p04.02 ci/p04.03
+            cat ci/p05.00 ci/p05.01 ci/p05.02 ci/p05.03
+          } | tr -d '[:space:]' | base64 --ignore-garbage -d > /tmp/VideoProps-textonly.zip
+          echo '36507019c0f0d350788ef522823df0828a49826387c4eeeade4da7eab73d907b  /tmp/VideoProps-textonly.zip' | sha256sum -c -
+          unzip -q /tmp/VideoProps-textonly.zip
+          python3 ci/generate_textures.py VideoPropsProject/src/main/resources/assets/videoprops/textures
+          test "$(find VideoPropsProject/src/main/resources/assets/videoprops/textures -name '*.png' | wc -l)" -eq 28
+      - name: Build with ForgeGradle
+        shell: bash
+        working-directory: VideoPropsProject
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          java -version
+          ./gradlew clean build --stacktrace --no-daemon 2>&1 | tee ../build.log
+          test -f build/libs/VideoProps-1.12.2-1.0.0.jar
+      - name: Package verified outputs
+        if: success()
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp VideoPropsProject/build/libs/VideoProps-1.12.2-1.0.0.jar dist/
+          cp build.log dist/BUILD_LOG.txt
+          cp VideoPropsProject/README.txt dist/README.txt
+          rm -rf VideoPropsProject/.gradle VideoPropsProject/build VideoPropsProject/run
+          zip -qr dist/VideoProps-1.12.2-1.0.0-src.zip VideoPropsProject
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoProps-build
+          path: |
+            dist/*
+            build.log
+          if-no-files-found: warn
