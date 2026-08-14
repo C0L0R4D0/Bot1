@@ -50,21 +50,31 @@ jobs:
           sudo apt-get install -y -qq xvfb >/dev/null
           JAR="$PWD/build/libs/VideoProps-1.12.2-1.0.0.jar"
           test -f "$JAR"
-          rm -rf run ../client-source-backup
+          rm -rf run ../client-source-backup ../client-latest.log ../crash-reports
           mkdir -p run/mods ../client-source-backup
           cp "$JAR" run/mods/
           mv src/main ../client-source-backup/main
           mkdir -p src/main/java src/main/resources
           rm -rf build/classes build/resources build/sources
+          collect_logs() {
+            [ -f run/logs/latest.log ] && cp run/logs/latest.log ../client-latest.log || true
+            if [ -d run/crash-reports ]; then
+              mkdir -p ../crash-reports
+              cp -a run/crash-reports/. ../crash-reports/ || true
+            fi
+          }
           restore_source() {
+            collect_logs
             pkill -f 'net.minecraft.launchwrapper.Launch' >/dev/null 2>&1 || true
             rm -rf src/main
-            mv ../client-source-backup/main src/main
+            [ -d ../client-source-backup/main ] && mv ../client-source-backup/main src/main || true
             rm -rf ../client-source-backup
           }
           trap restore_source EXIT
+          set +e
           xvfb-run -a ./gradlew runClient --stacktrace --no-daemon > ../client-launch.log 2>&1 &
           CLIENT_PID=$!
+          set -e
           READY=0
           for i in $(seq 1 240); do
             if [ -f run/logs/latest.log ] && grep -q 'Forge Mod Loader has successfully loaded' run/logs/latest.log; then
@@ -76,14 +86,19 @@ jobs:
             fi
             sleep 1
           done
+          collect_logs
           if [ "$READY" -ne 1 ]; then
             echo 'Minecraft client did not reach Forge loaded state.'
-            [ -f run/logs/latest.log ] && tail -n 250 run/logs/latest.log || true
-            tail -n 250 ../client-launch.log || true
+            echo '--- latest.log ---'
+            [ -f ../client-latest.log ] && tail -n 400 ../client-latest.log || echo 'latest.log not created'
+            echo '--- crash reports ---'
+            find ../crash-reports -type f -maxdepth 1 -print -exec tail -n 300 {} \; 2>/dev/null || true
+            echo '--- runClient output ---'
+            tail -n 300 ../client-launch.log || true
             exit 1
           fi
           sleep 8
-          cp run/logs/latest.log ../client-latest.log
+          collect_logs
           grep -Eiq 'videoprops|Video Props' ../client-latest.log
           if grep -Ei '(ERROR|FATAL).*videoprops|videoprops.*(ERROR|FATAL)|missing texture.*videoprops|unable to load model.*videoprops|loaderexceptionmodcrash|caught exception from video props|crash report' ../client-latest.log; then
             echo 'VideoProps client error detected.'
@@ -113,5 +128,6 @@ jobs:
             build.log
             client-launch.log
             client-latest.log
+            crash-reports/*
           if-no-files-found: warn
-# final jar clean-client launch verification v1
+# capture client failure logs v2
