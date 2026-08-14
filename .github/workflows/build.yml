@@ -28,6 +28,7 @@ jobs:
           } | tr -d '[:space:]' | base64 --ignore-garbage -d > /tmp/VideoProps-textonly.zip
           echo '36507019c0f0d350788ef522823df0828a49826387c4eeeade4da7eab73d907b  /tmp/VideoProps-textonly.zip' | sha256sum -c -
           unzip -q /tmp/VideoProps-textonly.zip
+          find VideoPropsProject/src/main/java -name '*.java' -print0 | xargs -0 sed -i 's/setUnlocalizedName(/setTranslationKey(/g; s/EnumFacing\.getHorizontal(/EnumFacing.byHorizontalIndex(/g; s/getTabIconItem()/createIcon()/g'
           python3 ci/generate_textures.py VideoPropsProject/src/main/resources/assets/videoprops/textures
           test "$(find VideoPropsProject/src/main/resources/assets/videoprops/textures -name '*.png' | wc -l)" -eq 28
       - name: Build with ForgeGradle
@@ -58,4 +59,4 @@ jobs:
             dist/*
             build.log
           if-no-files-found: warn
-# reuploaded source fragments v2
+# mapping compatibility fixes v1
