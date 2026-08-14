@@ -14,16 +14,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '8'
-      - name: Verify transfer fragments
-        run: python3 ci/verify_fragments.py
       - name: Reconstruct and verify source
         shell: bash
         run: |
           set -euo pipefail
           {
-            cat ci/text.b64.00 ci/text.b64.01 ci/text.b64.02 ci/text.b64.03
-            cat ci/p04.00 ci/p04.01fix.00 ci/p04.01fix.01 ci/p04.01fix.02 ci/p04.01fix.03 ci/p04.02 ci/p04.03
-            cat ci/p05.00 ci/p05.01 ci/p05.02 ci/p05.03
+            cat ci/text.b64.00 ci/text.b64.01 ci/text.b64.02
+            cat ci/rr03.{00..13}
+            cat ci/p04.00 ci/p04.01fix.00 ci/p04.01fix.01 ci/p04.01fix.02 ci/rr401x03
+            cat ci/rr402.{00..03} ci/rr403.{00..03}
+            cat ci/rr500.{00..03} ci/rr501.{00..03}
+            cat ci/p05.02 ci/p05.03
           } | tr -d '[:space:]' | base64 --ignore-garbage -d > /tmp/VideoProps-textonly.zip
           echo '36507019c0f0d350788ef522823df0828a49826387c4eeeade4da7eab73d907b  /tmp/VideoProps-textonly.zip' | sha256sum -c -
           unzip -q /tmp/VideoProps-textonly.zip
@@ -57,4 +58,4 @@ jobs:
             dist/*
             build.log
           if-no-files-found: warn
-# integrity diagnostic enabled
+# reuploaded source fragments v2
