@@ -41,6 +41,10 @@ jobs:
           ./gradlew clean build --stacktrace --no-daemon 2>&1 | tee ../build.log
           grep -q 'BUILD SUCCESSFUL' ../build.log
           test -f build/libs/VideoProps-1.12.2-1.0.0.jar
+          unzip -t build/libs/VideoProps-1.12.2-1.0.0.jar >/dev/null
+          unzip -l build/libs/VideoProps-1.12.2-1.0.0.jar | grep -q 'assets/videoprops/lang/en_us.lang'
+          unzip -l build/libs/VideoProps-1.12.2-1.0.0.jar | grep -q 'assets/videoprops/lang/ru_ru.lang'
+          unzip -l build/libs/VideoProps-1.12.2-1.0.0.jar | grep -q 'com/crystal/videoprops/VideoProps.class'
       - name: Launch final JAR in clean Forge client
         shell: bash
         working-directory: VideoPropsProject
@@ -81,7 +85,7 @@ jobs:
           set -e
           READY=0
           for i in $(seq 1 240); do
-            if [ -f run/logs/latest.log ] && grep -q 'Forge Mod Loader has successfully loaded' run/logs/latest.log; then
+            if [ -f run/logs/latest.log ] && grep -q 'Forge Mod Loader has successfully loaded 5 mods' run/logs/latest.log && grep -q 'FMLFileResourcePack:Video Props' run/logs/latest.log && grep -q 'SoundSystem started' run/logs/latest.log; then
               READY=1
               break
             fi
@@ -92,26 +96,89 @@ jobs:
           done
           collect_logs
           if [ "$READY" -ne 1 ]; then
-            echo 'Minecraft client did not reach Forge loaded state.'
-            echo '--- Xvfb/xrandr/glxinfo ---'
+            echo 'Minecraft client did not reach verified loaded state.'
             cat ../xvfb-check.log || true
-            echo '--- latest.log ---'
-            [ -f ../client-latest.log ] && tail -n 400 ../client-latest.log || echo 'latest.log not created'
-            echo '--- crash reports ---'
+            [ -f ../client-latest.log ] && tail -n 400 ../client-latest.log || true
             find ../crash-reports -type f -maxdepth 1 -print -exec tail -n 300 {} \; 2>/dev/null || true
-            echo '--- runClient output ---'
             tail -n 300 ../client-launch.log || true
             exit 1
           fi
           sleep 8
           collect_logs
-          grep -Eiq 'videoprops|Video Props' ../client-latest.log
-          if grep -Ei '(ERROR|FATAL).*videoprops|videoprops.*(ERROR|FATAL)|missing texture.*videoprops|unable to load model.*videoprops|loaderexceptionmodcrash|caught exception from video props|crash report' ../client-latest.log; then
+          grep -q 'Forge Mod Loader has identified 5 mods to load' ../client-latest.log
+          grep -q 'FMLFileResourcePack:Video Props' ../client-latest.log
+          grep -q 'Forge Mod Loader has successfully loaded 5 mods' ../client-latest.log
+          if grep -Ei '\[(Client thread|main)/(ERROR|FATAL)\].*(videoprops|Video Props)|missing texture.*(videoprops|Video Props)|unable to load model.*(videoprops|Video Props)|LoaderExceptionModCrash.*videoprops|Caught exception from Video Props' ../client-latest.log; then
             echo 'VideoProps client error detected.'
-            grep -Ei '(ERROR|FATAL).*videoprops|videoprops.*(ERROR|FATAL)|missing texture.*videoprops|unable to load model.*videoprops|loaderexceptionmodcrash|caught exception from video props|crash report' ../client-latest.log || true
+            exit 1
+          fi
+          if find ../crash-reports -type f -maxdepth 1 2>/dev/null | grep -q .; then
+            echo 'Crash report created during client verification.'
             exit 1
           fi
           echo 'FINAL JAR CLIENT LAUNCH SUCCESSFUL'
+      - name: Launch final JAR in clean Forge dedicated server
+        shell: bash
+        working-directory: VideoPropsProject
+        run: |
+          set -euo pipefail
+          JAR="$PWD/build/libs/VideoProps-1.12.2-1.0.0.jar"
+          rm -rf run ../server-source-backup ../server-latest.log ../server-crash-reports
+          mkdir -p run/mods ../server-source-backup
+          cp "$JAR" run/mods/
+          echo 'eula=true' > run/eula.txt
+          printf 'online-mode=false\nlevel-name=vp-ci-world\nserver-port=25566\nmax-tick-time=-1\n' > run/server.properties
+          mv src/main ../server-source-backup/main
+          mkdir -p src/main/java src/main/resources
+          rm -rf build/classes build/resources build/sources
+          collect_server_logs() {
+            [ -f run/logs/latest.log ] && cp run/logs/latest.log ../server-latest.log || true
+            if [ -d run/crash-reports ]; then
+              mkdir -p ../server-crash-reports
+              cp -a run/crash-reports/. ../server-crash-reports/ || true
+            fi
+          }
+          restore_source() {
+            collect_server_logs
+            pkill -f 'net.minecraft.launchwrapper.Launch' >/dev/null 2>&1 || true
+            rm -rf src/main
+            [ -d ../server-source-backup/main ] && mv ../server-source-backup/main src/main || true
+            rm -rf ../server-source-backup
+          }
+          trap restore_source EXIT
+          set +e
+          ./gradlew runServer --stacktrace --no-daemon > ../server-launch.log 2>&1 &
+          SERVER_PID=$!
+          set -e
+          READY=0
+          for i in $(seq 1 240); do
+            if [ -f run/logs/latest.log ] && grep -q 'Forge Mod Loader has successfully loaded 5 mods' run/logs/latest.log && grep -q 'Done (' run/logs/latest.log; then
+              READY=1
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          collect_server_logs
+          if [ "$READY" -ne 1 ]; then
+            echo 'Dedicated server did not reach ready state.'
+            [ -f ../server-latest.log ] && tail -n 400 ../server-latest.log || true
+            find ../server-crash-reports -type f -maxdepth 1 -print -exec tail -n 300 {} \; 2>/dev/null || true
+            tail -n 300 ../server-launch.log || true
+            exit 1
+          fi
+          grep -Eiq 'videoprops|Video Props' ../server-latest.log
+          if grep -Ei '\[(Server thread|main)/(ERROR|FATAL)\].*(videoprops|Video Props)|LoaderExceptionModCrash.*videoprops|Caught exception from Video Props' ../server-latest.log; then
+            echo 'VideoProps server error detected.'
+            exit 1
+          fi
+          if find ../server-crash-reports -type f -maxdepth 1 2>/dev/null | grep -q .; then
+            echo 'Crash report created during server verification.'
+            exit 1
+          fi
+          echo 'FINAL JAR DEDICATED SERVER LAUNCH SUCCESSFUL'
       - name: Package verified outputs
         if: success()
         shell: bash
@@ -121,6 +188,8 @@ jobs:
           cp build.log dist/BUILD_LOG.txt
           cp client-launch.log dist/CLIENT_LAUNCH.txt
           cp client-latest.log dist/CLIENT_LATEST.log
+          cp server-launch.log dist/SERVER_LAUNCH.txt
+          cp server-latest.log dist/SERVER_LATEST.log
           cp xvfb-check.log dist/XVFB_CHECK.txt
           cp VideoPropsProject/README.txt dist/README.txt
           rm -rf VideoPropsProject/.gradle VideoPropsProject/build VideoPropsProject/run
@@ -135,7 +204,10 @@ jobs:
             build.log
             client-launch.log
             client-latest.log
+            server-launch.log
+            server-latest.log
             xvfb-check.log
             crash-reports/*
+            server-crash-reports/*
           if-no-files-found: warn
-# Xvfb display-mode and Mesa software GL verification v3
+# corrected client error filter + dedicated-server final-jar check
