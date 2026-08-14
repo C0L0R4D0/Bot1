@@ -39,7 +39,58 @@ jobs:
           chmod +x gradlew
           java -version
           ./gradlew clean build --stacktrace --no-daemon 2>&1 | tee ../build.log
+          grep -q 'BUILD SUCCESSFUL' ../build.log
           test -f build/libs/VideoProps-1.12.2-1.0.0.jar
+      - name: Launch final JAR in clean Forge client
+        shell: bash
+        working-directory: VideoPropsProject
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb >/dev/null
+          JAR="$PWD/build/libs/VideoProps-1.12.2-1.0.0.jar"
+          test -f "$JAR"
+          rm -rf run ../client-source-backup
+          mkdir -p run/mods ../client-source-backup
+          cp "$JAR" run/mods/
+          mv src/main ../client-source-backup/main
+          mkdir -p src/main/java src/main/resources
+          rm -rf build/classes build/resources build/sources
+          restore_source() {
+            pkill -f 'net.minecraft.launchwrapper.Launch' >/dev/null 2>&1 || true
+            rm -rf src/main
+            mv ../client-source-backup/main src/main
+            rm -rf ../client-source-backup
+          }
+          trap restore_source EXIT
+          xvfb-run -a ./gradlew runClient --stacktrace --no-daemon > ../client-launch.log 2>&1 &
+          CLIENT_PID=$!
+          READY=0
+          for i in $(seq 1 240); do
+            if [ -f run/logs/latest.log ] && grep -q 'Forge Mod Loader has successfully loaded' run/logs/latest.log; then
+              READY=1
+              break
+            fi
+            if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo 'Minecraft client did not reach Forge loaded state.'
+            [ -f run/logs/latest.log ] && tail -n 250 run/logs/latest.log || true
+            tail -n 250 ../client-launch.log || true
+            exit 1
+          fi
+          sleep 8
+          cp run/logs/latest.log ../client-latest.log
+          grep -Eiq 'videoprops|Video Props' ../client-latest.log
+          if grep -Ei '(ERROR|FATAL).*videoprops|videoprops.*(ERROR|FATAL)|missing texture.*videoprops|unable to load model.*videoprops|loaderexceptionmodcrash|caught exception from video props|crash report' ../client-latest.log; then
+            echo 'VideoProps client error detected.'
+            grep -Ei '(ERROR|FATAL).*videoprops|videoprops.*(ERROR|FATAL)|missing texture.*videoprops|unable to load model.*videoprops|loaderexceptionmodcrash|caught exception from video props|crash report' ../client-latest.log || true
+            exit 1
+          fi
+          echo 'FINAL JAR CLIENT LAUNCH SUCCESSFUL'
       - name: Package verified outputs
         if: success()
         shell: bash
@@ -47,6 +98,8 @@ jobs:
           mkdir -p dist
           cp VideoPropsProject/build/libs/VideoProps-1.12.2-1.0.0.jar dist/
           cp build.log dist/BUILD_LOG.txt
+          cp client-launch.log dist/CLIENT_LAUNCH.txt
+          cp client-latest.log dist/CLIENT_LATEST.log
           cp VideoPropsProject/README.txt dist/README.txt
           rm -rf VideoPropsProject/.gradle VideoPropsProject/build VideoPropsProject/run
           zip -qr dist/VideoProps-1.12.2-1.0.0-src.zip VideoPropsProject
@@ -58,5 +111,7 @@ jobs:
           path: |
             dist/*
             build.log
+            client-launch.log
+            client-latest.log
           if-no-files-found: warn
-# mapping compatibility fixes v1
+# final jar clean-client launch verification v1
